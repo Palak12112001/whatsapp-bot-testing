@@ -1,9 +1,10 @@
 require('dotenv').config();
 
+
 // 👇 SUPER IMPORTANT: Full crypto polyfill for Node.js 20+ / 22+
 if (typeof global.crypto !== 'object') {
-  const { webcrypto } = require('crypto');
-  global.crypto = webcrypto;
+    const { webcrypto } = require('crypto');
+    global.crypto = webcrypto;
 }
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
@@ -11,9 +12,14 @@ const express = require('express');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 const qrcode = require('qrcode'); // 👈 add qrcode package
+const errorHandler = require('./middlewar/errorHandler');
+const ApiError = require('./Utils/ApiError');
+const asyncHandler = require('./middlewar/asyncHandler');
+const ApiResponse = require('./Utils/ApiResponse');
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 let currentQR = ''; // 👈 store latest QR globally
 
@@ -63,21 +69,26 @@ async function startBot() {
         }
     });
 
-    app.post('/send', async (req, res) => {
+
+
+    app.post('/send', asyncHandler(async (req, res) => {
         const { number, message } = req.body;
+        console.log("send api body : ", req.body);
+
         if (!number || !message) {
-            return res.status(400).json({ status: 'error', message: 'Number and message are required.' });
+            throw new ApiError(401, "Number and message are required.");
         }
 
         try {
             const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
             await sock.sendMessage(jid, { text: message });
-            res.json({ status: 'success', number });
+
+            res.status(200).json(new ApiResponse(true, 200, "Message sent successfully", number));
         } catch (error) {
-            console.error('Error sending message:', error);
-            res.status(500).json({ status: 'error', message: error.toString() });
+            throw new ApiError(error?.statusCode || 500, error.message || "Something went wrong", error.stack);
         }
-    });
+    }));
+
 
     // 👇 Add QR endpoint
     app.get('/qr', async (req, res) => {
@@ -86,6 +97,7 @@ async function startBot() {
         }
         res.sendFile(__dirname + '/qr.png');
     });
+    app.use(errorHandler);
 
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => console.log(`🚀 API Server started on http://localhost:${PORT}`));
