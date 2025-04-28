@@ -10,9 +10,12 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const express = require('express');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
+const qrcode = require('qrcode'); // 👈 add qrcode package
 
 const app = express();
 app.use(express.json());
+
+let currentQR = ''; // 👈 store latest QR globally
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth');
@@ -23,12 +26,16 @@ async function startBot() {
         browser: ['MyBot', 'Chrome', '10.0'],
     });
 
-    // Save credentials when updated
     sock.ev.on('creds.update', saveCreds);
 
-    // Connection status update handling
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            currentQR = qr; // 👈 store latest QR
+            await qrcode.toFile('./qr.png', qr); // 👈 create qr.png file
+            console.log('📸 QR Code saved as qr.png');
+        }
 
         if (connection === 'close') {
             const error = lastDisconnect?.error;
@@ -43,12 +50,12 @@ async function startBot() {
                     fs.rmSync('./auth', { recursive: true, force: true });
                 }
                 console.log('Please restart the bot and scan QR again.');
-                process.exit(0); // stop the bot
+                process.exit(0);
             }
 
             if (shouldReconnect) {
                 console.log('Reconnecting after 5 seconds...');
-                await new Promise(res => setTimeout(res, 5000)); // wait 5 seconds
+                await new Promise(res => setTimeout(res, 5000));
                 startBot();
             }
         } else if (connection === 'open') {
@@ -56,7 +63,6 @@ async function startBot() {
         }
     });
 
-    // API endpoint to send a WhatsApp message
     app.post('/send', async (req, res) => {
         const { number, message } = req.body;
         if (!number || !message) {
@@ -71,6 +77,14 @@ async function startBot() {
             console.error('Error sending message:', error);
             res.status(500).json({ status: 'error', message: error.toString() });
         }
+    });
+
+    // 👇 Add QR endpoint
+    app.get('/qr', async (req, res) => {
+        if (!fs.existsSync('./qr.png')) {
+            return res.status(404).send('QR code not generated yet.');
+        }
+        res.sendFile(__dirname + '/qr.png');
     });
 
     const PORT = process.env.PORT || 3000;
