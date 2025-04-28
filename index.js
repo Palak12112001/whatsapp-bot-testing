@@ -1,14 +1,17 @@
 require('dotenv').config();
 
-// Important: Attach crypto globally
-global.crypto = require('crypto');
+// 👇 SUPER IMPORTANT: Full crypto polyfill for Node.js 20+ / 22+
+if (typeof global.crypto !== 'object') {
+  const { webcrypto } = require('crypto');
+  global.crypto = webcrypto;
+}
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
-const app = express();
 
+const app = express();
 app.use(express.json());
 
 async function startBot() {
