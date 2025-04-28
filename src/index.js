@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path'); // Add this to work with absolute paths
 
 
 // 👇 SUPER IMPORTANT: Full crypto polyfill for Node.js 20+ / 22+
@@ -39,9 +40,11 @@ async function startBot() {
 
         if (qr) {
             currentQR = qr; // 👈 store latest QR
-            await qrcode.toFile('./qr.png', qr); // 👈 create qr.png file
+            const qrPath = path.join(__dirname, 'qr.png'); // Save the file inside the src folder
+            await qrcode.toFile(qrPath, qr); // 👈 create qr.png file in the src folder
             console.log('📸 QR Code saved as qr.png');
         }
+
 
         if (connection === 'close') {
             const error = lastDisconnect?.error;
@@ -89,13 +92,15 @@ async function startBot() {
     }));
 
 
-    // 👇 Add QR endpoint
     app.get('/qr', async (req, res) => {
-        if (!fs.existsSync('./qr.png')) {
+        const qrPath = path.join(__dirname, '/qr.png'); // Correct path to access the qr.png file from the root folder
+        if (!fs.existsSync(qrPath)) {
             return res.status(404).send('QR code not generated yet.');
         }
-        res.sendFile(__dirname + '/qr.png');
+        console.log('QR file path:', qrPath); // Log the correct path for debugging
+        res.sendFile(qrPath); // Serve the file from the root directory
     });
+
     app.use(errorHandler);
 
     const PORT = process.env.PORT || 3000;
