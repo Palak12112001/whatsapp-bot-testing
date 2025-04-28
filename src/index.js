@@ -73,7 +73,6 @@ async function startBot() {
 
     app.post('/send', asyncHandler(async (req, res) => {
         const { number, message } = req.body;
-        console.log("send api body : ", req.body);
 
         if (!number || !message) {
             throw new ApiError(401, "Number and message are required.");
