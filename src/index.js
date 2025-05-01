@@ -1,13 +1,12 @@
-// index.js
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+const axios = require('axios');
 const qrcode = require('qrcode');
 const { Boom } = require('@hapi/boom');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 
-// Middleware and utils
 const errorHandler = require('./middlewar/errorHandler');
 const asyncHandler = require('./middlewar/asyncHandler');
 const ApiError = require('./Utils/ApiError');
@@ -17,8 +16,6 @@ const upload = require('./middlewar/uploadMiddleware');
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Serve uploaded images (optional)
 app.use('/uploads', express.static(path.join(__dirname, 'utils/uploads')));
 
 let currentQR = '';
@@ -69,10 +66,10 @@ async function startBot() {
         }
     });
 
-    // Send Route
+    // POST /send route
     app.post('/send', upload.single('image'), asyncHandler(async (req, res) => {
-        const { number, message } = req.body;
-        const image = req.file;
+        const { number, message, image } = req.body;
+        const imageFile = req.file;
 
         if (!number || !message) {
             throw new ApiError(400, "Number and message are required");
@@ -81,8 +78,17 @@ async function startBot() {
         const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
 
         try {
-            if (image) {
-                const buffer = fs.readFileSync(image.path);
+            if (imageFile) {
+                const buffer = fs.readFileSync(imageFile.path);
+                await sock.sendMessage(jid, {
+                    image: buffer,
+                    caption: message
+                });
+            } else if (image) {
+                // Download image from URL
+                const response = await axios.get(image, { responseType: 'arraybuffer' });
+                const buffer = Buffer.from(response.data, 'binary');
+
                 await sock.sendMessage(jid, {
                     image: buffer,
                     caption: message
@@ -93,11 +99,11 @@ async function startBot() {
 
             res.status(200).json(new ApiResponse(true, 200, "Message sent successfully", number));
         } catch (error) {
+            console.error("Error:", error);
             throw new ApiError(500, "Failed to send message", error.stack);
         }
     }));
 
-    // QR Code Route
     app.get('/qr', (req, res) => {
         const qrPath = path.join(__dirname, 'qr.png');
         if (!fs.existsSync(qrPath)) return res.status(404).send('QR not available yet.');
