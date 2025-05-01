@@ -1,28 +1,32 @@
+// index.js
 require('dotenv').config();
-const path = require('path'); // Add this to work with absolute paths
-
-
-// 👇 SUPER IMPORTANT: Full crypto polyfill for Node.js 20+ / 22+
-if (typeof global.crypto !== 'object') {
-    const { webcrypto } = require('crypto');
-    global.crypto = webcrypto;
-}
-
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const express = require('express');
-const { Boom } = require('@hapi/boom');
+const path = require('path');
 const fs = require('fs');
-const qrcode = require('qrcode'); // 👈 add qrcode package
+const express = require('express');
+const qrcode = require('qrcode');
+const { Boom } = require('@hapi/boom');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+
+// Middleware and utils
 const errorHandler = require('./middlewar/errorHandler');
-const ApiError = require('./Utils/ApiError');
 const asyncHandler = require('./middlewar/asyncHandler');
+const ApiError = require('./Utils/ApiError');
 const ApiResponse = require('./Utils/ApiResponse');
+const upload = require('./middlewar/uploadMiddleware');
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-let currentQR = ''; // 👈 store latest QR globally
+// Serve uploaded images (optional)
+app.use('/uploads', express.static(path.join(__dirname, 'utils/uploads')));
+
+let currentQR = '';
+
+if (typeof global.crypto !== 'object') {
+    const { webcrypto } = require('crypto');
+    global.crypto = webcrypto;
+}
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth');
@@ -39,72 +43,71 @@ async function startBot() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            currentQR = qr; // 👈 store latest QR
-            const qrPath = path.join(__dirname, 'qr.png'); // Save the file inside the src folder
-            await qrcode.toFile(qrPath, qr); // 👈 create qr.png file in the src folder
+            currentQR = qr;
+            const qrPath = path.join(__dirname, 'qr.png');
+            await qrcode.toFile(qrPath, qr);
             console.log('📸 QR Code saved as qr.png');
         }
 
-
         if (connection === 'close') {
             const error = lastDisconnect?.error;
-            const statusCode = error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = error?.output?.statusCode !== DisconnectReason.loggedOut;
 
-            console.log('Connection closed due to', error?.message || error, ', reconnecting:', shouldReconnect);
-
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log('Session expired. Deleting auth folder...');
-                if (fs.existsSync('./auth')) {
-                    fs.rmSync('./auth', { recursive: true, force: true });
-                }
-                console.log('Please restart the bot and scan QR again.');
+            if (!shouldReconnect) {
+                fs.rmSync('./auth', { recursive: true, force: true });
+                console.log('Session expired. Scan again.');
                 process.exit(0);
             }
 
-            if (shouldReconnect) {
-                console.log('Reconnecting after 5 seconds...');
-                await new Promise(res => setTimeout(res, 5000));
-                startBot();
-            }
-        } else if (connection === 'open') {
+            console.log('🔄 Reconnecting...');
+            await new Promise(res => setTimeout(res, 5000));
+            startBot();
+        }
+
+        if (connection === 'open') {
             console.log('✅ Connected to WhatsApp');
         }
     });
 
-
-
-    app.post('/send', asyncHandler(async (req, res) => {
+    // Send Route
+    app.post('/send', upload.single('image'), asyncHandler(async (req, res) => {
         const { number, message } = req.body;
+        const image = req.file;
 
         if (!number || !message) {
-            throw new ApiError(401, "Number and message are required.");
+            throw new ApiError(400, "Number and message are required");
         }
 
+        const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
+
         try {
-            const jid = number.includes('@s.whatsapp.net') ? number : `${number}@s.whatsapp.net`;
-            await sock.sendMessage(jid, { text: message });
+            if (image) {
+                const buffer = fs.readFileSync(image.path);
+                await sock.sendMessage(jid, {
+                    image: buffer,
+                    caption: message
+                });
+            } else {
+                await sock.sendMessage(jid, { text: message });
+            }
 
             res.status(200).json(new ApiResponse(true, 200, "Message sent successfully", number));
         } catch (error) {
-            throw new ApiError(error?.statusCode || 500, error.message || "Something went wrong", error.stack);
+            throw new ApiError(500, "Failed to send message", error.stack);
         }
     }));
 
-
-    app.get('/qr', async (req, res) => {
-        const qrPath = path.join(__dirname, '/qr.png'); // Correct path to access the qr.png file from the root folder
-        if (!fs.existsSync(qrPath)) {
-            return res.status(404).send('QR code not generated yet.');
-        }
-        console.log('QR file path:', qrPath); // Log the correct path for debugging
-        res.sendFile(qrPath); // Serve the file from the root directory
+    // QR Code Route
+    app.get('/qr', (req, res) => {
+        const qrPath = path.join(__dirname, 'qr.png');
+        if (!fs.existsSync(qrPath)) return res.status(404).send('QR not available yet.');
+        res.sendFile(qrPath);
     });
 
     app.use(errorHandler);
 
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => console.log(`🚀 API Server started on http://localhost:${PORT}`));
+    app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
 }
 
 startBot();
